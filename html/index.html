@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <title>카카오맵 + 구 표시</title>
+  <style>
+    #map {
+      width: 100%;
+      height: 100vh;
+    }
+  </style>
+</head>
+<body>
+
+<div id="map"></div>
+
+<!-- 카카오맵 -->
+<script src="//dapi.kakao.com/v2/maps/sdk.js?appkey=8a64f8dd5fa4f9d44644222cdea30be6"></script>
+
+<script>
+  // =========================
+  // 1. 지도 생성
+  // =========================
+  const container = document.getElementById('map');
+
+  const options = {
+    center: new kakao.maps.LatLng(37.5665, 126.9780), // 서울
+    level: 8
+  };
+
+  const map = new kakao.maps.Map(container, options);
+
+  // =========================
+  // 2. GeoJSON 불러오기
+  // =========================
+  fetch('./seoul_gu_geo.json')
+    .then(res => res.json())
+    .then(data => {
+
+      data.features.forEach(feature => {
+
+        const coords = feature.geometry.coordinates[0];
+
+        // GeoJSON → Kakao LatLng 변환
+        const path = coords.map(coord => {
+          return new kakao.maps.LatLng(coord[1], coord[0]);
+        });
+
+        // =========================
+        // 3. 폴리곤 생성
+        // =========================
+        const polygon = new kakao.maps.Polygon({
+          map: map,
+          path: path,
+          strokeWeight: 2,
+          strokeColor: '#004c80',
+          strokeOpacity: 0.8,
+          fillColor: '#0099ff',
+          fillOpacity: 0.5
+        });
+
+        // =========================
+        // 4. 클릭 이벤트
+        // =========================
+        kakao.maps.event.addListener(polygon, 'click', function() {
+          alert(feature.properties.name);
+        });
+
+      });
+
+    })
+    .catch(err => {
+      console.error("GeoJSON 로드 실패:", err);
+    });
+
+</script>
+
+</body>
+</html>
