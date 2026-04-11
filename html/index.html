@@ -2,77 +2,349 @@
 <html lang="ko">
 <head>
   <meta charset="UTF-8">
-  <title>카카오맵 + 구 표시</title>
+  <title>카카오맵 + 구 경계 + 지하철/상권 표시</title>
   <style>
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+    }
+
+    #topbar {
+      padding: 12px 16px;
+      background: #f8f8f8;
+      border-bottom: 1px solid #ddd;
+      display: flex;
+      gap: 16px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    #selected-gu {
+      font-weight: bold;
+      color: #004c80;
+    }
+
     #map {
       width: 100%;
-      height: 100vh;
+      height: calc(100vh - 58px);
     }
+
+    .legend {
+      position: absolute;
+      bottom: 20px;
+      left: 20px;
+      z-index: 10;
+      background: white;
+      padding: 10px 12px;
+      border: 1px solid #ccc;
+      border-radius: 8px;
+      font-size: 13px;
+      line-height: 1.7;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+    }
+
+    .dot {
+      display: inline-block;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      margin-right: 6px;
+    }
+
+    .blue { background: #1e90ff; }
+    .red { background: #ff4d4f; }
+    .sky { background: #66ccff; }
   </style>
 </head>
 <body>
 
+<div id="topbar">
+  <span id="selected-gu">선택된 구: 없음</span>
+  <label><input type="checkbox" id="toggleSubway" checked> 지하철 표시</label>
+  <label><input type="checkbox" id="toggleShop" checked> 상권 표시</label>
+  <button id="resetBtn">전체 보기</button>
+</div>
+
 <div id="map"></div>
 
-<!-- 카카오맵 -->
+<div class="legend">
+  <div><span class="dot sky"></span>구 경계</div>
+  <div><span class="dot blue"></span>지하철</div>
+  <div><span class="dot red"></span>상권</div>
+</div>
+
 <script src="//dapi.kakao.com/v2/maps/sdk.js?appkey=8a64f8dd5fa4f9d44644222cdea30be6"></script>
 
 <script>
-  // =========================
-  // 1. 지도 생성
-  // =========================
   const container = document.getElementById('map');
-
   const options = {
-    center: new kakao.maps.LatLng(37.5665, 126.9780), // 서울
+    center: new kakao.maps.LatLng(37.5665, 126.9780),
     level: 8
   };
 
   const map = new kakao.maps.Map(container, options);
 
-  // =========================
-  // 2. GeoJSON 불러오기
-  // =========================
-  fetch('./seoul_gu_geo.json')
-    .then(res => res.json())
-    .then(data => {
+  const selectedGuEl = document.getElementById('selected-gu');
+  const toggleSubwayEl = document.getElementById('toggleSubway');
+  const toggleShopEl = document.getElementById('toggleShop');
+  const resetBtn = document.getElementById('resetBtn');
 
-      data.features.forEach(feature => {
+  let selectedGu = null;
 
-        const coords = feature.geometry.coordinates[0];
+  let subwayData = [];
+  let shopData = [];
+  let cachedGeoJson = null;
 
-        // GeoJSON → Kakao LatLng 변환
-        const path = coords.map(coord => {
-          return new kakao.maps.LatLng(coord[1], coord[0]);
-        });
+  let subwayMarkers = [];
+  let shopMarkers = [];
+  let guPolygons = [];
+  let guOverlays = [];
 
-        // =========================
-        // 3. 폴리곤 생성
-        // =========================
-        const polygon = new kakao.maps.Polygon({
-          map: map,
-          path: path,
-          strokeWeight: 2,
-          strokeColor: '#004c80',
-          strokeOpacity: 0.8,
-          fillColor: '#0099ff',
-          fillOpacity: 0.5
-        });
+  function clearMarkers(markers) {
+    markers.forEach(marker => marker.setMap(null));
+  }
 
-        // =========================
-        // 4. 클릭 이벤트
-        // =========================
-        kakao.maps.event.addListener(polygon, 'click', function() {
-          alert(feature.properties.name);
-        });
+  function createInfoWindowContent(title, detailLines = []) {
+    const details = detailLines.map(line => `<div>${line}</div>`).join('');
+    return `<div style="padding:8px 10px; font-size:12px; line-height:1.5;">
+      <strong>${title}</strong>
+      ${details}
+    </div>`;
+  }
 
-      });
+  function addInfoWindow(marker, content) {
+    const infowindow = new kakao.maps.InfoWindow({ content });
 
-    })
-    .catch(err => {
-      console.error("GeoJSON 로드 실패:", err);
+    kakao.maps.event.addListener(marker, 'mouseover', function() {
+      infowindow.open(map, marker);
     });
 
+    kakao.maps.event.addListener(marker, 'mouseout', function() {
+      infowindow.close();
+    });
+  }
+
+  function makeMarkerImage(colorType) {
+    let src = "https://t1.daumcdn.net/localimg/localimages/07/mapapidoc/markerStar.png";
+
+    if (colorType === "red") {
+      src = "https://t1.daumcdn.net/localimg/localimages/07/mapapidoc/marker_red.png";
+    }
+
+    return new kakao.maps.MarkerImage(src, new kakao.maps.Size(24, 35));
+  }
+
+  async function loadJson(path) {
+    const response = await fetch(path);
+    if (!response.ok) {
+      throw new Error(`${path} 로드 실패`);
+    }
+    return response.json();
+  }
+
+  function clearGuLayers() {
+    guPolygons.forEach(p => p.setMap(null));
+    guOverlays.forEach(o => o.setMap(null));
+    guPolygons = [];
+    guOverlays = [];
+  }
+
+  function drawPolygonPath(coords) {
+    return coords.map(coord => new kakao.maps.LatLng(coord[1], coord[0]));
+  }
+
+  function drawSinglePolygon(path, guName, isSelected = false) {
+  const polygon = new kakao.maps.Polygon({
+    map: map,
+    path: path,
+    strokeWeight: isSelected ? 4 : 2,
+    strokeColor: isSelected ? '#ff6600' : '#004c80',
+    strokeOpacity: 0.9,
+    fillColor: isSelected ? '#ffcc80' : '#0099ff',
+    fillOpacity: isSelected ? 0.45 : 0.22
+  });
+
+  kakao.maps.event.addListener(polygon, 'click', function() {
+    selectedGu = guName;
+    selectedGuEl.textContent = `선택된 구: ${selectedGu}`;
+    renderAll();
+  });
+
+  guPolygons.push(polygon);
+
+  const bounds = new kakao.maps.LatLngBounds();
+  path.forEach(point => bounds.extend(point));
+
+  const sw = bounds.getSouthWest();
+  const ne = bounds.getNorthEast();
+
+  const centerLat = (sw.getLat() + ne.getLat()) / 2;
+  const centerLng = (sw.getLng() + ne.getLng()) / 2;
+
+  const overlay = new kakao.maps.CustomOverlay({
+    position: new kakao.maps.LatLng(centerLat, centerLng),
+    content: `
+      <div style="
+        background:white;
+        border:1px solid #999;
+        border-radius:4px;
+        padding:2px 6px;
+        font-size:12px;
+        white-space:nowrap;
+      ">
+        ${guName}
+      </div>
+    `,
+    yAnchor: 1
+  });
+
+  overlay.setMap(map);
+  guOverlays.push(overlay);
+}
+
+  function drawGeoJson(geojson) {
+    clearGuLayers();
+
+    geojson.features.forEach(feature => {
+      const guName = feature.properties.name;
+      const geometry = feature.geometry;
+      const isSelected = selectedGu === guName;
+
+      if (geometry.type === "Polygon") {
+        const outer = geometry.coordinates[0];
+        const path = drawPolygonPath(outer);
+        drawSinglePolygon(path, guName, isSelected);
+      } else if (geometry.type === "MultiPolygon") {
+        geometry.coordinates.forEach(polygonCoords => {
+          const outer = polygonCoords[0];
+          const path = drawPolygonPath(outer);
+          drawSinglePolygon(path, guName, isSelected);
+        });
+      }
+    });
+  }
+
+  function renderSubwayMarkers() {
+    clearMarkers(subwayMarkers);
+    subwayMarkers = [];
+
+    if (!toggleSubwayEl.checked) return;
+
+    let filtered = subwayData;
+    if (selectedGu) {
+      filtered = subwayData.filter(item => item.gu === selectedGu);
+    }
+
+    filtered.forEach(item => {
+      const marker = new kakao.maps.Marker({
+        map: map,
+        position: new kakao.maps.LatLng(item.lat, item.lng),
+        title: item.name,
+        image: makeMarkerImage("blue")
+      });
+
+      addInfoWindow(
+        marker,
+        createInfoWindowContent(item.name, [
+          `노선: ${item.line || "정보없음"}`,
+          `구: ${item.gu || "정보없음"}`
+        ])
+      );
+
+      subwayMarkers.push(marker);
+    });
+  }
+
+  function renderShopMarkers() {
+    clearMarkers(shopMarkers);
+    shopMarkers = [];
+
+    if (!toggleShopEl.checked) return;
+
+    let filtered = shopData;
+    if (selectedGu) {
+      filtered = shopData.filter(item => item.gu === selectedGu);
+    }
+
+    filtered.forEach(item => {
+      const marker = new kakao.maps.Marker({
+        map: map,
+        position: new kakao.maps.LatLng(item.lat, item.lng),
+        title: item.name,
+        image: makeMarkerImage("red")
+      });
+
+      addInfoWindow(
+        marker,
+        createInfoWindowContent(item.name, [
+          `업종: ${item.category}`,
+          `구: ${item.gu}`,
+          `동: ${item.dong || "정보없음"}`
+        ])
+      );
+
+      shopMarkers.push(marker);
+    });
+  }
+
+  function moveMapToSelectedGu() {
+    if (!selectedGu) return;
+
+    const relevantPoints = [
+      ...subwayData.filter(item => item.gu === selectedGu),
+      ...shopData.filter(item => item.gu === selectedGu)
+    ];
+
+    if (relevantPoints.length === 0) return;
+
+    const bounds = new kakao.maps.LatLngBounds();
+    relevantPoints.forEach(item => {
+      bounds.extend(new kakao.maps.LatLng(item.lat, item.lng));
+    });
+
+    map.setBounds(bounds);
+  }
+
+  function renderAll() {
+    if (cachedGeoJson) {
+      drawGeoJson(cachedGeoJson);
+    }
+    renderSubwayMarkers();
+    renderShopMarkers();
+    moveMapToSelectedGu();
+  }
+
+  toggleSubwayEl.addEventListener('change', renderAll);
+  toggleShopEl.addEventListener('change', renderAll);
+
+  resetBtn.addEventListener('click', function() {
+    selectedGu = null;
+    selectedGuEl.textContent = '선택된 구: 없음';
+    map.setCenter(new kakao.maps.LatLng(37.5665, 126.9780));
+    map.setLevel(8);
+    renderAll();
+  });
+
+  async function init() {
+    try {
+      const [geojson, subwayJson, shopJson] = await Promise.all([
+        loadJson('./seoul_gu_geo.json'),
+        loadJson('./subway_points.json'),
+        loadJson('./shop_points.json')
+      ]);
+
+      cachedGeoJson = geojson;
+      subwayData = subwayJson;
+      shopData = shopJson;
+
+      renderAll();
+    } catch (err) {
+      console.error(err);
+      alert('지도 데이터 로드 중 오류가 발생했습니다. 콘솔을 확인해주세요.');
+    }
+  }
+
+  init();
 </script>
 
 </body>
