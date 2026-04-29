@@ -217,16 +217,45 @@
     chatMessages.scrollTop = chatMessages.scrollHeight;
   }
 
-  chatSend.onclick = () => {
+  chatSend.onclick = async () => {
     const text = chatInput.value.trim();
     if (!text) return;
-    addMessage(text, 'user');
+    if (!selectedGu) {
+      addMessage("먼저 지도의 '구'를 클릭해서 지역을 선택해 주세요!", 'bot');
+      return;
+    }
+
+    addMessage(text, 'user'); // 내가 보낸 메시지 화면에 표시
     chatInput.value = '';
-    
-    // 임시 분석 메시지
-    setTimeout(() => { 
-      addMessage(`'${text}' 요청에 대해 ${selectedGu}의 인프라 데이터를 분석 중입니다... 잠시만 기다려주세요.`, 'bot'); 
-    }, 600);
+
+    try {
+      // 파이썬 Flask 서버로 데이터 전송
+      const response = await fetch('http://127.0.0.1:5000/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: text, gu: selectedGu })
+      });
+
+      const data = await response.json();
+
+      if (data.status === "success" && data.results.length > 0) {
+        let resultHtml = `<strong>${selectedGu}</strong>의 데이터를 분석한 결과, 추천드리는 동네입니다:<br><br>`;
+        
+        data.results.forEach((item, index) => {
+          resultHtml += `
+            <div class="recommend-item" onclick="alert('${item.name}으로 이동합니다 (구현 예정)')">
+              ${index + 1}위: <strong>${item.name}</strong> (종합 ${item.total}점)
+            </div><br>`;
+        });
+        
+        addMessage(resultHtml, 'bot');
+      } else {
+        addMessage("검색 결과가 없습니다. 조건을 다르게 입력해 보시겠어요?", 'bot');
+      }
+    } catch (error) {
+      console.error(error);
+      addMessage("서버 연결 실패! 파이썬 app_flask.py가 실행 중인지 확인해 주세요.", 'bot');
+    }
   };
 
   // 엔터키 전송 (한글 중복 전송 방지 포함)
