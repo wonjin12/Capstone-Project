@@ -13,10 +13,8 @@ def chat():
         user_input = data.get('message')
         target_gu = data.get('gu')
 
-        # 1. 조원분이 만든 Kiwi 분석 로직 사용
         extracted_prefs = kiwi_int.analyze_user_sentence(user_input)
         
-        # 2. 조원분이 만든 메인 분석 로직 실행 (TOP 5 추출)
         analysis_results = main_logic.run_analysis(target_gu, extracted_prefs)
 
         return jsonify({
