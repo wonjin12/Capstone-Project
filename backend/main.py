@@ -3,9 +3,9 @@
 import pandas as pd
 
 try:
-    import backend.mapping_engine as mapping_engine
+    import backend.engine as engine
 except ModuleNotFoundError:
-    import mapping_engine
+    import backend.engine as engine
 
 
 # 🔵 dataset 로드
@@ -28,12 +28,11 @@ merged_df = pd.merge(
 )
 
 
+
 def run_analysis(target_gu, user_prefs):
 
-    keywords = ['지하철', '카페', '병원', '편의점']
 
-    conditions = mapping_engine.get_customized_conditions(
-        keywords,
+    conditions = engine.get_customized_conditions(
         user_prefs
     )
 
@@ -55,38 +54,28 @@ def run_analysis(target_gu, user_prefs):
 
         total_score = 0
 
-        for kw in keywords:
+        for condition, info in conditions.items():
 
-            d_key = f"{kw}_밀도"
+            facility = info['facility']   # kiwi에서 만든 거
+            weight = info['final_w']
 
-            if d_key not in conditions:
+            if weight <= 1.0:
                 continue
 
-            # 🔵 컬럼 정확히 반영
-            if kw == "지하철":
-                count = row["지하철역"]
+            if facility not in row:
+                continue
 
-            elif kw == "카페":
-                count = row["카페"]
+            count = row[facility]
 
-            elif kw == "병원":
-                count = row["병원"]
+            total_score += count * weight
 
-            elif kw == "편의점":
-                count = row["편의점"]
-
-            else:
-                count = 0
-
-            total_score += (
-                count *
-                conditions[d_key]["final_w"]
-            )
-
+        total_score = round(total_score, 2)
+        
         results.append({
             "name": dong_name,
-            "total": round(total_score, 2)
+            "total": total_score
         })
+
 
     # 🔵 점수 정렬
     results.sort(
