@@ -92,7 +92,7 @@
   <div><span class="dot red"></span>상권</div>
 </div>
 
-<script src="//dapi.kakao.com/v2/maps/sdk.js?appkey=8a64f8dd5fa4f9d44644222cdea30be6"></script>
+<script src="//dapi.kakao.com/v2/maps/sdk.js?appkey=6d8751bd0babc58bad72687608a1306e"></script>
 
 <script>
   // 1. 지도 설정
@@ -112,6 +112,12 @@
   let selectedGu = null;
   let subwayData = [], shopData = [], cachedGeoJson = null;
   let subwayMarkers = [], shopMarkers = [], guPolygons = [];
+
+  // --- [추가] Streamlit 매물 검색 페이지를 새 창으로 여는 함수 ---
+  function openStreamlit(dongName) {
+    const url = `http://localhost:8501/?dong=${encodeURIComponent(dongName)}`;
+    window.open(url, '_blank');
+  }
 
   function openChatbot(guName) {
     chatbotContainer.style.display = 'flex';
@@ -225,11 +231,10 @@
       return;
     }
 
-    addMessage(text, 'user'); // 내가 보낸 메시지 화면에 표시
+    addMessage(text, 'user'); 
     chatInput.value = '';
 
     try {
-      // 파이썬 Flask 서버로 데이터 전송
       const response = await fetch('http://127.0.0.1:5000/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -242,9 +247,10 @@
         let resultHtml = `<strong>${selectedGu}</strong>의 데이터를 분석한 결과, 추천드리는 동네입니다:<br><br>`;
         
         data.results.forEach((item, index) => {
+          // --- [수정] alert 대신 openStreamlit 함수를 호출하도록 변경 ---
           resultHtml += `
-            <div class="recommend-item" onclick="alert('${item.name}으로 이동합니다 (구현 예정)')">
-              ${index + 1}위: <strong>${item.name}</strong> (종합 ${item.total}점)
+            <div class="recommend-item" onclick="openStreamlit('${item.name}')">
+              🏠 ${index + 1}위: <strong>${item.name}</strong> 보러가기 (종합 ${item.total}점)
             </div><br>`;
         });
         
@@ -258,7 +264,6 @@
     }
   };
 
-  // 엔터키 전송 (한글 중복 전송 방지 포함)
   chatInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
       e.preventDefault();
