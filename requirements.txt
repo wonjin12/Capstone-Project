@@ -1,0 +1,9 @@
+chainlit
+konlpy
+kiwipiepy
+pandas
+numpy
+scikit-learn
+folium
+requests
+python-dotenv
