@@ -121,10 +121,49 @@
   window.open(url, '_blank');
 }
 
-  function openChatbot(guName) {
+function openChatbot(guName) {
     chatbotContainer.style.display = 'flex';
     chatbotTitle.innerText = `${guName} 분석 챗봇`;
+    
+    // 이전 대화 내역 초기화
+    chatMessages.innerHTML = ""; 
+    
     addMessage(`<strong>${guName}</strong> 지역을 분석할 준비가 되었습니다. 어떤 조건이 중요하신가요?`, 'bot');
+
+    const tagContainer = document.createElement('div');
+    tagContainer.style.marginTop = '10px';
+    tagContainer.style.display = 'flex';
+    tagContainer.style.flexDirection = 'column';
+    tagContainer.style.gap = '6px';
+    
+    // 챗봇창에 보여질 예시 문구 배열
+    const examples = [
+      "역세권이면서 편의점이 많은 동네",
+      "주변에 맛있는 음식점과 카페가 많은 곳",
+      "(한성대입구)역이 가깝고 근처에 병원이 있는 곳"
+    ];
+
+    examples.forEach(ex => {
+      const tag = document.createElement('span');
+      tag.className = 'guide-tag';
+      tag.style.cursor = 'pointer';
+      tag.innerText = `💡 "${ex}"`;
+      
+      // 예시 버튼을 클릭하면 입력창에 해당 텍스트가 자동으로 들어가고 포커싱됨
+      tag.onclick = () => {
+        chatInput.value = ex;
+        chatInput.focus();
+        
+        // 만약 세 번째 예시를 누르면 사용자가 역 이름만 쉽게 바꿀 수 있게 블록 지정 팁
+        if(ex.includes("(한성대입구)")) {
+          chatInput.setSelectionRange(0, 7); // '한성대입구' 부분만 블록 지정되어서 바로 타이핑 가능
+        }
+      };
+      tagContainer.appendChild(tag);
+    });
+
+    chatMessages.appendChild(tagContainer);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
   }
 
   closeChatbot.onclick = () => { chatbotContainer.style.display = 'none'; };
