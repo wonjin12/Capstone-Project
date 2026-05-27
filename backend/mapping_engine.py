@@ -1,12 +1,17 @@
 # mapping_engine.py
 
-def get_customized_conditions(keywords, user_weights):
+def get_customized_conditions(keywords, user_weights, has_target_station=False):
     """
-    Kiwi 인터페이스에서 분석된 10개 세부 항목별 가중치를 반영합니다. (음식점 포함)
+    Kiwi 인터페이스에서 분석된 10개 세부 항목별 가중치를 반영합니다.
+    💡 특정 역 검색 시(has_target_station=True) 지하철 도보 영향권(radius)을 1200m로 확장하여 
+       물리적으로 인접한 이웃 동네들이 정상적인 거리 점수를 획득할 수 있도록 구조를 보정합니다.
     """
     # [시스템 기본 설정] 각 시설의 물리적 한계 거리(radius)와 중요도(base_w)
+    # 특정 역 중심 검색일 때는 지하철 근접 반경을 400m에서 1200m로 동적 확장합니다.
+    subway_radius = 1200 if has_target_station else 400
+    
     base_config = {
-        '지하철_근접': {'label': '초역세권(도보)', 'radius': 400, 'base_w': 5.0},
+        '지하철_근접': {'label': '초역세권(도보)', 'radius': subway_radius, 'base_w': 5.0},
         '지하철_밀도': {'label': '다세권(노선)', 'radius': 800, 'base_w': 1.2},
         
         '카페_밀도': {'label': '카세권(상권)', 'radius': 400, 'base_w': 0.5},

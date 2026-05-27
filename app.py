@@ -17,17 +17,27 @@ st.title("🏠 서울시 실거래가 통합 검색")
 # =========================
 # 파일 경로 및 데이터 로드
 # =========================
-current_dir = Path(__file__).parent
+# 💡 .resolve()를 사용하여 실행 위치와 상관없이 실제 app.py 파일 위치 기준으로 data 폴더를 탐색합니다.
+current_dir = Path(__file__).resolve().parent
 transaction_json_path = current_dir / "data" / "transaction_unified.json"
 
 from backend.legal_dong import ADMIN_TO_LEGAL_DONG
 
 @st.cache_data
 def load_transaction_json(file_path: Path) -> pd.DataFrame:
+    # 🚨 파일이 지정된 위치에 없을 경우 에러와 함께 실제 탐색 경로를 화면에 출력합니다.
     if not file_path.exists():
+        st.error("❌ [파일 탐색 실패] 실거래가 데이터 파일을 찾지 못했습니다!")
+        st.warning("코드가 데이터를 찾으려고 확인한 맥북 내부 주소는 다음과 같습니다:")
+        st.code(str(file_path.resolve()))
+        st.info("💡 위 주소에 실제로 'data' 폴더와 'transaction_unified.json' 파일이 들어있는지 확인해주세요.")
         return pd.DataFrame()
     
-    df = pd.read_json(file_path)
+    try:
+        df = pd.read_json(file_path)
+    except Exception as e:
+        st.error(f"❌ [파일 파싱 실패] 파일은 찾았으나 내부 데이터 구조가 깨졌습니다: {e}")
+        return pd.DataFrame()
     
     string_cols = ["gu", "dong", "property_type", "rent_type", "address", "complex_name"]
     for col in string_cols:
@@ -92,8 +102,21 @@ if url_query and st.session_state.get("processed_query") != url_query:
         db_match_rows = df_raw[df_raw["dong"].isin(legal_candidates)]
         if not db_match_rows.empty:
             matched_gu = db_match_rows.iloc[0]["gu"]
+        else:
+            # 💡 사전에는 있으나 실제 데이터베이스(df_raw)에 매물이 아예 없는 경우 (예: 보라매동, 서원동 등)
+            # 엉뚱한 타 권역으로 튕기지 않도록 URL 텍스트 분석 및 키워드로 구를 매칭합니다.
+            for gu_candidate in all_gu:
+                if gu_candidate in url_query:
+                    matched_gu = gu_candidate
+                    break
+            
+            if not matched_gu:
+                if any(k in url_query for k in ["보라매", "서원", "은천", "신림", "남현", "봉천", "관악"]):
+                    matched_gu = "관악구"
+                elif any(k in url_query for k in ["면목", "중랑", "망우"]):
+                    matched_gu = "중랑구"
 
-    # 2. 행정동 이름으로 걸리지 않은 경우
+    # 2. 행정동 이름으로 걸리지 않은 경우 (법정동 기준 매칭)
     if not matched_dong:
         for _, row in df_raw[["gu", "dong"]].drop_duplicates().iterrows():
             d_name = row["dong"]
@@ -116,6 +139,20 @@ if url_query and st.session_state.get("processed_query") != url_query:
                 matched_dong = d_name
                 matched_gu = row["gu"]
                 break
+
+    # 💡 [보완된 방어선] 행정동/법정동 모두 매칭되지 않은 예외 텍스트일 때만 글자를 유지하도록 제한합니다.
+    # 면목본동이나 보라매동이 여기서 무차별적으로 덮어씌워지는 현상을 방지합니다.
+    if not matched_dong:
+        for w in query_words:
+            if "동" in w and len(w) >= 3:
+                if w not in ADMIN_TO_LEGAL_DONG:
+                    matched_dong = w
+                    break
+
+    # 최종 구 이름 백업 보완 로직
+    if matched_dong and not matched_gu:
+        if "면목" in matched_dong: matched_gu = "중랑구"
+        elif "신림" in matched_dong or "보라매" in matched_dong or "서원" in matched_dong or "은천" in matched_dong: matched_gu = "관악구"
 
     if matched_gu:
         st.session_state["target_gu"] = matched_gu
@@ -144,7 +181,7 @@ if df_raw.empty:
     st.stop()
 
 # 1. 구 선택 위젯
-default_gu_name = st.session_state.get("target_gu", "광진구")
+default_gu_name = st.session_state.get("target_gu", "관악구")
 if default_gu_name not in all_gu:
     default_gu_name = all_gu[0]
 default_gu_idx = all_gu.index(default_gu_name)
@@ -163,11 +200,15 @@ for admin_dong, legal_list in ADMIN_TO_LEGAL_DONG.items():
         if admin_dong not in all_dong:
             all_dong.append(admin_dong)
 
+# 데이터에 없는 행정동(보라매동 등) 링크로 유입된 경우 셀렉트박스 튕김 방지를 위해 강제 포함
+target_session_dong = st.session_state.get("target_dong", "")
+if target_session_dong and target_session_dong not in all_dong:
+    all_dong.append(target_session_dong)
+
 all_dong = sorted(all_dong) 
 
 # 기본값 인덱스 설정
 default_dong_idx = 0
-target_session_dong = st.session_state.get("target_dong", "")
 
 if target_session_dong in all_dong:
     default_dong_idx = all_dong.index(target_session_dong)
@@ -215,13 +256,17 @@ def check_priority(db_dong):
         return 2
     return 1
 
-filtered_df["priority"] = filtered_df["dong"].apply(check_priority)
-result_df = filtered_df.sort_values(by=["priority", "deposit"], ascending=[False, True])
+if not filtered_df.empty:
+    filtered_df["priority"] = filtered_df["dong"].apply(check_priority)
+    result_df = filtered_df.sort_values(by=["priority", "deposit"], ascending=[False, True])
+else:
+    result_df = pd.DataFrame()
 
 st.subheader(f"✨ {selected_dong} 관할 권역 통합 검색 결과 (총 {len(result_df)}건)")
 
+# 💡 데이터가 없으면 확실하게 해당 구/동 경고창을 띄우고 종료합니다.
 if result_df.empty:
-    st.warning("조건에 맞는 매물이 없습니다.")
+    st.warning(f"⚠️ 현재 {selected_gu} {selected_dong}에 조건에 맞는 실거래가 매물이 없습니다.")
 else:
     display_df = pd.DataFrame()
     
