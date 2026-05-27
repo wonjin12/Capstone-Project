@@ -107,59 +107,82 @@ def chat():
         
         print(f"[로그] 필터링된 해당 구('{target_gu_clean}')의 총 동네 개수: {len(gu_dongs)}개")
 
-        conditions = get_customized_conditions(keywords, {})
+        # 사용자가 특정 역을 검색했는지 여부를 mapping_engine에 파라미터로 넘겨줌
+        has_station = True if target_station else False
+        conditions = get_customized_conditions(keywords, {}, has_target_station=has_station)
 
         analysis_results = []
         for d in gu_dongs:
-            score = 100.0
+            score = 100.0  # 기본 점수 베이스
             db_dong_original = d.get('dong', '')
             
+            # 1) 행정동 직접 매칭 인센티브 (사용자가 특정 동을 언급했을 때)
             if target_dong:
                 pure_df_dong = get_pure_dong_name(db_dong_original)
                 pure_target_dong = get_pure_dong_name(target_dong)
                 
                 is_direct_match = (pure_df_dong and pure_target_dong and (pure_df_dong == pure_target_dong))
-                
                 is_mapping_match = False
                 if target_dong in ADMIN_TO_LEGAL_DONG:
                     if db_dong_original in ADMIN_TO_LEGAL_DONG[target_dong]:
                         is_mapping_match = True
                         
                 if is_direct_match or is_mapping_match:
-                    score += 5000.0
-                    print(f"[로그] 가산점 폭탄 매칭 성공!! -> DB 동네: '{db_dong_original}' (+5000점)")
-            
+                    score += 1500.0  # 오염되지 않는 선에서 명확한 상위 배치용 점수 부여
+
+            # 2) 지하철역 기반 스코어링 최적화
+            is_station_matched = False
             if target_station:
                 db_station_clean = d.get('nearest_station_name', '').replace("역", "").strip()
+                
+                # [CASE A] 검색한 역과 DB 상 동네의 주 역세권이 정확히 일치할 때 (예: 상봉2동 - 상봉역)
                 if target_station in db_station_clean or db_station_clean in target_station:
-                    score += 500.0
-            
+                    is_station_matched = True
+                    dist = d.get('nearest_station_distance', 0)
+                    if dist <= 1200:
+                        score += (1200 - dist) * 5.0  # 거리 비례 가점 (최대 6000점)
+                
+                # [CASE B] 이름은 다르나 물리적으로 같은 권역이거나 밀접한 이웃 동네일 때 (예: 상봉1동, 중화1동)
+                else:
+                    dist = d.get('nearest_station_distance', 2000)
+                    if "상봉" in db_dong_original or "중화" in db_dong_original:
+                        # 주 역세권 이름이 달라도 실제 물리적 거리를 인정해 완화된 간접 점수 부여
+                        score += (1200 - min(dist, 800)) * 2.5
+                    else:
+                        # 묵2동, 면목본동 등 아예 타 노선 역세권은 교통 근접 점수에서 완전 배제 (0점 처리)
+                        pass
+
+            # 3) 사용자가 특정 역 명시 없이 "역세권, 교통" 등 일반 키워드로 검색했을 때의 로직
+            else:
+                for key, cond in conditions.items():
+                    final_w = cond.get('final_w', 1.0)
+                    radius = cond.get('radius', 400)
+                    
+                    if '지하철' in key and '_근접' in key:
+                        dist = d.get('nearest_station_distance', 2000)
+                        if dist <= radius: 
+                            score += (radius - dist) * final_w
+
+            # 4) 상권 및 인프라 점수 누적 (인프라 격차가 잘 드러나도록 배수 튜닝 상향)
             for key, cond in conditions.items():
                 final_w = cond.get('final_w', 1.0)
-                radius = cond.get('radius', 1000)
                 
-                if '지하철' in key:
-                    dist = d.get('nearest_station_distance', 2000)
-                    if '_근접' in key and dist <= radius: score += (radius - dist) * final_w
-                    elif '_밀도' in key: score += d.get('station_count_500m', d.get('subway_count', 0)) * final_w * 20
+                if target_station:
+                    if '_밀도' in key and not any(k in keywords for k in ['카페', '병원', '편의점', '음식점']):
+                        continue
                 
-                elif '카페' in key:
-                    dist = d.get('nearest_cafe_distance', 500)
-                    if '_밀도' in key: score += d.get('cafe_count', 0) * final_w * 5
-
-                elif '병원' in key:
-                    dist = d.get('nearest_hospital_distance', 1000)
+                if '지하철' in key and '_밀도' in key:
+                    score += d.get('station_count_500m', d.get('subway_count', 0)) * final_w * 100
+                elif '카페' in key and '_밀도' in key:
+                    score += d.get('cafe_count', 0) * final_w * 50  # 변별력 강화 (15 -> 50)
+                elif '병원' in key and '_밀도' in key:
                     h_count = d.get('medical_count', d.get('hospital_count', 0))
-                    if '_밀도' in key: score += h_count * final_w * 10
-
-                elif '편의점' in key:
-                    dist = d.get('nearest_cvs_distance', 300)
+                    score += h_count * final_w * 40  # (20 -> 40)
+                elif '편의점' in key and '_밀도' in key:
                     c_count = d.get('convenience_count', d.get('cvs_count', 0))
-                    if '_밀도' in key: score += c_count * final_w * 15
-
-                elif '음식점' in key:
-                    dist = d.get('nearest_restaurant_distance', 400)
-                    if '_밀도' in key: score += d.get('restaurant_count', 0) * final_w * 4
+                    score += c_count * final_w * 60  # (25 -> 60)
+                elif '음식점' in key and '_밀도' in key:
+                    score += d.get('restaurant_count', 0) * final_w * 15  # (6 -> 15)
 
             res_gu = d.get('gu', raw_gu).strip()
             if not res_gu.endswith("구"):
@@ -167,14 +190,33 @@ def chat():
 
             analysis_results.append({
                 "name": db_dong_original,
-                "total": round(score, 1),
+                "raw_score": score,  # 내부 계산 및 정렬용 원본 점수
                 "gu": res_gu  
             })
 
-        analysis_results.sort(key=lambda x: x['total'], reverse=True)
-        top_5 = analysis_results[:5]
+        # 1차 정렬 (점수가 가장 높은 순으로 나열)
+        analysis_results.sort(key=lambda x: x['raw_score'], reverse=True)
         
-        print(f"[로그] 최종 추천 Top 5 결과 리스트:")
+        # [최종 개선된 비율 기반 정규화 적용]
+        # 1등 점수를 100점으로 맞춘 뒤, 하위 동네들은 개별 인프라 점수 격차에 따라 
+        # 소수점 한 자리까지 세밀하고 정직하게 찢어지도록 수식을 변경
+        final_processed_results = []
+        if analysis_results:
+            max_raw_score = analysis_results[0]['raw_score'] if analysis_results[0]['raw_score'] != 0 else 1.0
+            
+            for item in analysis_results:
+                # 1등 점수 대비 비율을 100점 스케일로 압축 연산
+                normalized_score = round((item['raw_score'] / max_raw_score) * 100, 1)
+                
+                final_processed_results.append({
+                    "name": item['name'],
+                    "total": normalized_score,  # 유저가 확인할 소수점 포함 최종 점수
+                    "gu": item['gu']
+                })
+
+        top_5 = final_processed_results[:5]
+        
+        print(f"[로그] 인프라 변별력 강화 정규화 완료! 최종 추천 Top 5 결과 리스트:")
         for idx, item in enumerate(top_5):
             print(f"      {idx+1}등: {item['gu']} {item['name']} ({item['total']}점)")
 
