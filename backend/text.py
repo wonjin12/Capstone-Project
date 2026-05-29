@@ -22,7 +22,7 @@ def extract_keywords_from_message(message):
     target_station = None
     station_match = re.search(r'([가-힣]{2,8})역', message)
     if station_match:
-        target_station = station_match.group(1).replace("역", "").strip()
+        target_station = station_match.group(1).strip()
 
     found = []
     for key, synonyms in mapping.items():

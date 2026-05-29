@@ -44,11 +44,11 @@ def calculate_dong_score(
         if '지하철_근접' in key:
 
             max_dist = max(
-                x.get('nearest_station_distance', 9999)
+                x.get('target_station_distance', 9999)
                 for x in filtered_dongs
             )
 
-            dist = d.get('nearest_station_distance', 9999)
+            dist = d.get('target_station_distance', 9999)
 
             subway_score = (
                 1 - (dist / max_dist)

@@ -18,12 +18,29 @@ def get_customized_conditions(keywords):
 
     return final_conditions
 
+def normalize_station_name(name):
+
+    return (
+        name
+        .replace("역", "")
+        .split("(")[0]
+        .strip()
+    )
+
+
 # 역 좌표 찾기 함수
 def find_station_coords(station_name, subway_data):
 
+    target = normalize_station_name(station_name)
+
     for station in subway_data:
 
-        if station['name'] == station_name:
+        db_name = normalize_station_name(
+            station['name']
+        )
+
+        if db_name == target:
+
             return (
                 station['lat'],
                 station['lng']
@@ -54,6 +71,8 @@ def filter_dongs_by_station(
     target_station,
     subway_data
 ):
+    
+    print("[target_station]", target_station)
 
     if not target_station:
         return gu_dongs
@@ -62,6 +81,7 @@ def filter_dongs_by_station(
         target_station,
         subway_data
     )
+
 
     if not station_coords:
         return gu_dongs
@@ -96,7 +116,7 @@ def filter_dongs_by_station(
         )
     )
 
-    return filtered_dongs[:5]
+    return filtered_dongs
 
 def run_recommendation(
         user_message,
@@ -136,7 +156,7 @@ def run_recommendation(
         '지하철_환승' : 'line_count_500m'
         }
         
-    # 점수 계산 시작
+
     for d in filtered_dongs:
 
         score = calculate_dong_score(
@@ -198,3 +218,4 @@ def filter_gu_dongs(infra_data, target_gu):
         print(f"[로그] 필터링된 해당 구('{target_gu_clean}')의 총 동네 개수: {len(gu_dongs)}개")
 
         return gu_dongs
+
